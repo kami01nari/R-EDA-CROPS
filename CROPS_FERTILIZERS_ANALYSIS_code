@@ -1,0 +1,772 @@
+####Libraries 
+library(tidyverse)
+library(skimr)
+library(naniar)
+library(DataExplorer)
+library(janitor)
+library(stringdist)
+library(scales)
+library(gridExtra)
+library(ggalt)
+library(pals)
+library(ggrepel)
+library(patchwork)
+library(writexl)
+##########################FULL_CROP_EDITED_DATA CLEANING #######################
+
+## uploading and understanding the data
+df<-read.csv(file = 'C:/Users/Wadie/Desktop/agriEDA/FULL_CROP_EDITED_DATA.csv')
+
+##Understanding the data 
+str(df)
+glimpse(df)
+skim_without_charts(df)
+
+#Unique values 
+unique(df$Element)
+unique(df$Unit)
+## create 3 data sets by dividing and sorting df by groups 
+area<-df %>% filter(df$Element == "Area harvested") %>% 
+  subset(select = -c(Element,Unit)) %>% 
+  rename("Area harvested"="Value") %>% 
+  arrange(Area,Item,year)
+
+prod<-df %>% filter(df$Element == "Production") %>% 
+  subset(select = -c(Element,Unit)) %>% 
+  rename("Production"="Value") %>% 
+  arrange(Area,Item,year)
+
+yield<-df %>% filter(df$Element == "Yield") %>% 
+  subset(select = -c(Element,Unit)) %>% 
+  rename("Yield"="Value") %>% 
+  arrange(Area,Item,year)
+
+## merge the data sets into one while keeping na values
+yield<- complete(yield,Area,year,Item)##yield with all na
+prod<- complete(prod,Area,year,Item)## prod with all na 
+yie_prod<-merge(yield,prod,by=c("Area","Item","year")) ## merging them 
+crop_na<-complete(area, Area, year,Item) %>% 
+  inner_join(.,yie_prod) ## adding area with nas and merging everything
+
+
+##Cleaning rows with more than 2 nas in the production,Area harvested, and Yield 
+  # creating a function for that 
+delete.na <- function(DF, n=0) {
+  DF[rowSums(is.na(DF)) <= n,]
+}
+
+crop_organized<-delete.na(crop_na,2)#Applying the function
+crop_organized<-arrange(crop_organized,Area,Item,year)#sorting 
+crop_organized<-crop_organized[,c(1,2,3,4,6,5)]#Organizing the columns 
+
+#Understanding what we have just made
+str(crop_organized)
+skim_without_charts(crop_organized)
+
+## rename the columns to add units and recalculate the Yield field 
+crop_organized<-rename(crop_organized, "Production(tonnes)"="Production",
+                       "Area_harvested(ha)"="Area harvested",
+                       "Yield(tonnes/ha)"="Yield")
+crop_organized$`Yield(tonnes/ha)`<-crop_organized$`Yield(tonnes/ha)`*0.0001
+
+## visualizing missing values 
+plot_missing(
+  crop_organized,
+  group = list("Good" = 0, "Ok" = 0.06, "Bad" = 1),
+  missing_only = FALSE,
+  geom_label_args = list("size" = 4, "label.padding" = unit(0.1, "lines")),
+  title = 'Missing Values',
+  ggtheme = theme(title = element_text(size = 20)),
+  theme_config = list(legend.position=c("bottom"))
+  )
+
+gg_miss_var(crop_organized)+labs(title = "Count Of Missung Values")
+
+gg_miss_fct(crop_organized, year)+
+  ggtitle("% Missing values by year")+
+  scale_x_continuous(breaks = scales::breaks_extended(n = 10))
+
+## unique values
+unique_values_crop <- rapply(crop_organized,function(x) length(unique(x)))
+unique_values_crop
+
+unique(crop_organized$Area)
+unique(crop_organized$Item)
+
+##checking for duplicates
+sum(duplicated(crop_organized,fromLast = TRUE))
+
+#################### FERTILIZERS CLEANING ######################################
+
+##### Uploading DATA 
+fert<- read.csv('C:/Users/Wadie/Desktop/agriEDA/Fertilizer_consumption/fertilizer_consumption_edited.csv')
+fert<-arrange(fert,Country.Name)
+str(fert)
+skim_without_charts(fert)
+View(fert)
+###### unique values for fert Country.Name = 266 
+unique_values_fert <- rapply(fert,function(x) length(unique(x)))
+unique_values_fert
+unique(fert$Country.Name)
+     
+##### Creating new data frame based on `fert`
+fert2<-fert
+unique_values_fert2 <- rapply(fert2,function(x) length(unique(x)))
+unique_values_fert2
+
+##### removing countries that don't exist in the crop_organized and updating the Country.name by Area
+fert2$Country.Name <- crop_organized$Area[amatch(
+  substr(fert2$Country.Name,1,nchar(fert2$Country.Name)), 
+  substr(crop_organized$Area,1,nchar(fert2$Country.Name)),method = "lcs",maxDist = 3)]
+
+##### Removing NA values 
+fert2<-drop_na(fert2,Country.Name)
+fert2<-arrange(fert2,Country.Name)
+
+######checking if both data frames match 
+setdiff(fert2$Country.Name,crop_organized$Area)
+sum(fert2$Country.Name %in% unique(crop_organized$Area))
+crop_organized[!(crop_organized$Area %in% fert2$Country.Name),  ]
+fert2[fert2$Country.Name %in% unique(crop_organized$Area),  ]
+View(fert2)
+
+#####checking for dups and creating 
+sum(duplicated(fert2$Country.Name,fromLast = TRUE))
+dups_fert<-fert2
+dups_fert<-subset(fert2,duplicated(Country.Name))
+View(dups_fert)
+
+##### removing dups
+fert2$Country.Name[fert2$Country.Code %in% dups_fert$Country.Code]<-
+  c("d","China","Greenland","Iraq","Israel","Japan","d","Oman","d") # put d for rows we want to delete later 
+fert2<-subset(fert2, Country.Name!="d") # delete rows with d value
+
+##########Cleaning year columns names by removing "X"
+names(fert2)<-sub("^X", "", names(fert2))
+
+########## removing some useless column
+fert2<-select(fert2,-c(3,4,5))
+
+########Understand what we made 
+View(fert2)
+str(fert2)
+
+#######Making data frame longer 
+fert_organized<-fert2
+fert_organized<- pivot_longer(fert_organized, cols = 3:63,names_to = "year")
+fert_organized<-rename(fert_organized,"fertilizer_utilization"="value")#Renaming columns
+head(fert_organized)
+
+######## Changing year data type
+fert_organized$year<-as.integer(fert_organized$year)
+
+## visualizing missing values 
+plot_missing(
+  fert_organized,
+  group = list("Good" = 0, "Ok" = 0.06, "Bad" = 1),
+  missing_only = FALSE,
+  geom_label_args = list("size" = 4, "label.padding" = unit(0.1, "lines")),
+  title = 'Missing Values fert_organized',
+  ggtheme = theme(title = element_text(size = 20)),
+  theme_config = list(legend.position=c("bottom"))
+)
+
+gg_miss_var(fert_organized,)+labs(title = "Count Of Missung Values")
+sum(is.na(fert_organized$fertilizer_utilization))
+
+gg_miss_fct(fert_organized, year)+
+  ggtitle("% Missing values by year")+
+  scale_x_continuous(breaks = scales::breaks_extended(n = 20))
+
+
+gg_miss_case(fert_organized)+labs(title = "Cases of Missing Values")
+gg_miss_case(fert_organized, facet = year)+labs(title = "Cases of Missing Values")
+
+
+gg_miss_span(fert_organized, fertilizer_utilization, span_every = 1000)+theme_dark()
+
+#### deleting rows 
+fert_organized<-subset(fert_organized,fert_organized$year!=2019) 
+fert_organized<-subset(fert_organized,fert_organized$year!=2020)
+fert_organized<-subset(fert_organized,fert_organized$year!=2021)
+
+
+#################### POPULATION CLEANING (like just values and things not ppl)######################################
+
+#Uploading the data
+pop <- read.csv(file = 'C:/Users/Wadie/Desktop/agriEDA/population/population_edited.csv')
+str(pop) 
+
+##### Creating new data frame based on `pop`
+pop2<-pop
+unique_values_pop2 <- rapply(pop2,function(x) length(unique(x)))
+unique_values_pop2
+
+##### removing countries that don't exist in the crop_organized and updating the Country.name by Area
+pop2$Country.Name <- crop_organized$Area[amatch(
+  substr(pop2$Country.Name,1,nchar(pop2$Country.Name)), 
+  substr(crop_organized$Area,1,nchar(pop2$Country.Name)),method = "lcs",maxDist = 3)]
+
+##### Removing NA values 
+pop2<-drop_na(pop2,Country.Name)
+pop2<-arrange(pop2,Country.Name)
+
+######checking if both data frames match 
+setdiff(pop2$Country.Name,crop_organized$Area)
+sum(pop2$Country.Name %in% unique(crop_organized$Area))
+crop_organized[!(crop_organized$Area %in% pop2$Country.Name),  ]
+pop2[pop2$Country.Name %in% unique(crop_organized$Area),  ]
+View(pop2)
+
+#####checking for dups and creating 
+sum(duplicated(pop2$Country.Name,fromLast = TRUE))
+dups_pop2<-pop2
+dups_pop2<-subset(pop2,duplicated(Country.Name))
+View(dups_pop2)
+
+##### removing dups
+pop2$Country.Name[pop2$Country.Code %in% dups_pop2$Country.Code]<-
+  c("d","China","Greenland","Iraq","Israel","Japan","d","Oman","d") # put d for rows we want to delete later 
+pop2<-subset(pop2, Country.Name!="d") # delete rows with d 
+
+##########Cleaning year columns names by removing "X"
+names(pop2)<-sub("^X", "", names(pop2))
+
+
+########Understanding what we made 
+str(pop2)
+
+########## removing some useless column
+pop2<-select(pop2,-c(3,4))
+
+#######Making data frame longer 
+pop_organized<-pop2
+pop_organized<- pivot_longer(pop_organized, cols = 3:64,names_to = "year")
+pop_organized<-rename(pop_organized,"Population"="value")#Renaming columns
+head(pop_organized)
+
+######## Changing year data type
+pop_organized$year<-as.integer(pop_organized$year)
+
+####### Checking for missing values 
+sum(is.na(pop_organized))
+temp<-pop_organized
+temp<-pop_organized[rowSums(is.na(pop_organized)) > 0,]
+View(temp)
+
+####################ANALYZING CROPS #################################################
+
+mean(crop_organized$`Area_harvested(ha)`,na.rm=TRUE)
+mean(crop_organized$`Production(tonnes)`,na.rm = TRUE)
+mean(crop_organized$`Yield(tonnes/ha)`,na.rm = TRUE)
+
+max(crop_organized$`Area_harvested(ha)`,na.rm=TRUE)
+max(crop_organized$`Production(tonnes)`,na.rm = TRUE)
+max(crop_organized$`Yield(tonnes/ha)`,na.rm = TRUE)
+
+#######investigate the high yield value
+invest<-crop_organized %>% 
+  filter(.,Area == "Netherlands",Item =="Mushrooms and truffles")
+  
+ggplot(invest,aes(x= year,y=`Yield(tonnes/ha)`))+
+  geom_line(color="#f8474c")+
+  xlim(c(1988,2022))+
+  theme(axis.text.x = element_text(size=8,face="bold",angle = 90, vjust = 0.5, hjust=1))
+
+##################################################
+min(crop_organized$`Area_harvested(ha)`,na.rm=TRUE)
+min(crop_organized$`Production(tonnes)`,na.rm = TRUE)
+min(crop_organized$`Yield(tonnes/ha)`,na.rm = TRUE)
+
+filter(crop_organized, crop_organized$`Area_harvested(ha)` > 70205007)
+filter(crop_organized,crop_organized$`Production(tonnes)` > 768594153)
+filter(crop_organized,crop_organized$`Yield(tonnes/ha)` > 5084.745)
+
+
+############## PLOTS date############################
+
+mindate<-min(crop_organized$year)
+maxdate<-max(crop_organized$year)
+
+###############TOP 20 CROPS BY PRODUCTION##################
+sumpro<-crop_organized %>% 
+  group_by(Item) %>% 
+  drop_na() %>% 
+  summarize(total_production=sum(`Production(tonnes)`)) %>% 
+  arrange(desc(total_production)) %>% 
+  top_n(total_production,n = 20)
+
+ggplot(data = sumpro,aes(x=Item,y=total_production))+
+  geom_bar(stat = "identity",fill="#f8474c")+
+  scale_y_continuous(labels = unit_format(unit = "Billion", scale = 1e-9))+
+  theme(axis.text.x = element_text(size=8,face="bold",angle = 90, vjust = 0.5, hjust=1))+
+  ylab("total production")+
+  xlab("Crops")+
+  labs(title = "Top 20 Crops By Total Production",
+       subtitle = paste0("Date from: ",mindate," to ",maxdate),
+       caption = "*total production is in tonnes")
+  
+
+
+############################### avg production top 5#####################
+
+meanpro<-crop_organized %>% 
+  group_by(Item) %>% 
+  drop_na() %>% 
+  summarize(avg_production=mean(`Production(tonnes)`)) %>% 
+  arrange(desc(avg_production)) %>% 
+  top_n(avg_production,n = 5)
+
+ggplot(data = meanpro,aes(x=Item,y=avg_production))+
+  geom_bar(stat = "identity",fill="#f8474c")+
+  scale_y_continuous(labels = unit_format(unit = "M", scale = 1e-6))+
+  theme(axis.text.x = element_text(size=10,face="bold",angle = 90, vjust = 0.5, hjust=1))+
+  ylab("AVG production")+
+  xlab("Crops")+
+  labs(title = "Top 5 Crops By Average of Production",
+       subtitle = paste0("Date from: ",mindate," to ",maxdate),
+       caption = "*Average production is in tonnes")
+
+
+############################### avg area harvested top 5#####################
+
+meanarea<-crop_organized %>% 
+  group_by(Item) %>% 
+  drop_na() %>% 
+  summarize(avg_area=mean(`Area_harvested(ha)`)) %>% 
+  arrange(desc(avg_area)) %>% 
+  top_n(avg_area,n = 5) 
+
+
+ggplot(data = meanarea,aes(x=reorder(Item, -avg_area),y=avg_area))+
+  geom_bar(stat = "identity",fill="#f8474c")+
+  scale_y_continuous(labels = unit_format(unit = "K", scale = 1e-3))+
+  theme(axis.text.x = element_text(size=15,face="bold",angle = 90, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(size=10,face="bold"))+
+  ylab("AVG are harvested")+
+  xlab("Crops")+
+  labs(title = "Top 5 Crops By Average of Area Harvested",
+       subtitle = paste0("Date from: ",mindate," to ",maxdate),
+       caption = "*Average area harvested is in hectares")
+
+
+############################### avg yield top 5#####################
+
+meanyield_nomush<-crop_organized %>% 
+  filter(.,crop_organized$Item !="Mushrooms and truffles") %>% 
+  group_by(Item) %>% 
+  drop_na() %>% 
+  summarize(avg_yield=mean(`Yield(tonnes/ha)`)) %>% 
+  arrange(desc(avg_yield)) %>% 
+  top_n(avg_yield,n = 5) 
+
+nomush<-ggplot(data = meanyield_nomush,aes(x=reorder(Item, -avg_yield),y=avg_yield))+
+  geom_bar(stat = "identity",fill="#f8474c")+
+  theme(axis.text.x = element_text(face="bold",angle = 90, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(face="bold"))+
+  ylab("AVG yield")+
+  xlab("Crops")+
+  labs(title = "Top 5 Crops By Average of Yield",
+       subtitle = paste0("Date from: ",mindate," to ",maxdate),
+       caption = "**Average Yield with no mushrooms and truffles")
+
+meanyield<-crop_organized %>% 
+  group_by(Item) %>% 
+  drop_na() %>% 
+  summarize(avg_yield=mean(`Yield(tonnes/ha)`)) %>% 
+  arrange(desc(avg_yield)) %>% 
+  top_n(avg_yield,n = 5) 
+
+mush<-ggplot(data = meanyield,aes(x=reorder(Item, -avg_yield),y=avg_yield))+
+  geom_bar(stat = "identity",fill="#f8474c")+
+  theme(axis.text.x = element_text(face="bold",angle = 90, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(face="bold"))+
+  ylab("AVG yield")+
+  xlab("Crops")+
+  labs(title = "Top 5 Crops By Average of Yield",
+       subtitle = paste0("Date from: ",mindate," to ",maxdate),
+       caption = "*Average Yield is in tonnes/ha")
+
+grid.arrange(mush, nomush, nrow = 1)
+
+
+
+################ top 5 lowest yield###################
+
+lowyield<-crop_organized %>% 
+  group_by(Item) %>% 
+  drop_na() %>% 
+  summarize(avg_yield=mean(`Yield(tonnes/ha)`)) %>% 
+  arrange(desc(avg_yield)) %>% 
+  top_n(avg_yield,n = -5)
+
+ggplot(data = lowyield,aes(x=reorder(Item, avg_yield),y=avg_yield))+
+  geom_bar(stat = "identity",fill="#f8474c")+
+  theme(axis.text.x = element_text(size=10,face="bold",angle = 90, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(face="bold"))+
+  ylab("AVG yield")+
+  xlab("Crops")+
+  labs(title = "Top 5 Lowest Crops By Average of Yield",
+       subtitle = paste0("Date from: ",mindate," to ",maxdate),
+       caption = "*Average Yield is in tonnes/ha")
+
+#######################top countries by yield###############
+topyield<-crop_organized %>% 
+  group_by(.,Area) %>% 
+  summarise(.,avg_yield=mean(`Yield(tonnes/ha)`)) %>%
+  arrange(desc(avg_yield)) %>% 
+  top_n(avg_yield,n=10)
+
+ggplot(data = topyield,aes(x=reorder(Area, -avg_yield),y=avg_yield))+
+  geom_bar(stat = "identity",fill="#f8474c")+
+  theme(axis.text.x = element_text(size=10,face="bold",angle = 90, vjust = 0.5, hjust=1),
+        axis.text.y = element_text(face="bold"))+
+  ylab("AVG yield")+
+  xlab("Crops")+
+  labs(title = "Top 10 Countries By Average of Yield",
+       subtitle = paste0("Date from: ",mindate," to ",maxdate),
+       caption = "*Average Yield is in tonnes/ha")
+#################### Area vs production#####################
+
+highyield<-crop_organized %>% 
+  filter(.,`Yield(tonnes/ha)`> 12.11)
+lowyield<-crop_organized %>% 
+  filter(.,`Yield(tonnes/ha)`< 12.11)
+
+ggplot(crop_organized,aes(x=`Area_harvested(ha)`, y =`Production(tonnes)`))+
+  geom_point()+
+  geom_smooth(method = "lm",se = FALSE)+
+  geom_encircle(aes(x=`Area_harvested(ha)`, y=`Production(tonnes)`), 
+                data=highyield, 
+                color="green", 
+                size=2, 
+                expand=0.05) +
+  geom_encircle(aes(x=`Area_harvested(ha)`, y=`Production(tonnes)`), 
+                data=lowyield, 
+                color="red", 
+                size=2, 
+                expand=0.05) +
+  scale_y_continuous(labels = unit_format(unit = "M", scale = 1e-6))+
+  scale_x_continuous(labels = unit_format(unit = "K", scale = 1e-3))+
+  labs(title = "Coorelation Between Production and Area Harvested",subtitle =  "Production Vs Area Harvested")
+
+################## NORMALISED YIELD################################
+norm<-crop_organized
+norm$yieldnorm<-
+  round((norm$`Yield(tonnes/ha)`-mean(norm$`Yield(tonnes/ha)`,na.rm = TRUE))/sd(norm$`Yield(tonnes/ha)`,na.rm = TRUE),2)
+norm$normtype<- ifelse(norm$yieldnorm < 0, "below", "above")
+norm <- norm[order(norm$yieldnorm), ]
+
+ggplot(norm, aes(x=Item, y=yieldnorm, label=yieldnorm)) + 
+  geom_bar(stat='identity', aes(fill=normtype), width=.5)  +
+  scale_fill_manual(name="Yield", 
+                    labels = c("Above Average", "Below Average"), 
+                    values = c("above"="#00ba38", "below"="#f8474c")) + 
+  theme(plot.title = element_text(size=40),
+        plot.subtitle = element_text(size = 35)
+    ,axis.text.x = element_text(size = 20,face="bold")
+    ,axis.text.y = element_text(size = 20,face="bold")
+    ,axis.title = element_text(size = 30 )
+    ,legend.title = element_text(size = 30)
+    ,legend.text = element_text(size = 25))+
+  xlab("Crops")+
+  ylab("Yield_norm")+
+  labs(subtitle="All Crops", 
+       title= "Normalised Yield") + 
+  coord_flip()
+
+
+##################### ARE and prod over time#######################
+yersum<-crop_organized %>% 
+  group_by(.,year) %>% 
+  summarise(sumarea=sum(`Area_harvested(ha)`,na.rm = TRUE),sumprod=sum(`Production(tonnes)`,na.rm = TRUE))
+
+coeff <- 10
+bk<-1961:2020
+
+cr<-ggplot(yersum,aes(x=year))+
+  geom_area(aes(y=sumarea),fill="#5E17EB",alpha= 0.8)+
+  geom_area(aes(y=sumprod/coeff),fill="#F8747C")+
+  scale_y_continuous(labels = unit_format(unit = "M", scale = 1e-6),
+                     name = "Area harvested(ha)",
+                     sec.axis = sec_axis(~.*coeff,name ="Production(tonnes)",
+                                         labels = unit_format(unit = "M", scale = 1e-6)))+
+  scale_x_continuous("Years", labels = as.character(yersum$year), breaks = bk)+
+  theme(axis.title.y.left = element_text(colour = "#5E17EB"),
+        axis.title.y.right = element_text(colour = "#F8747C"),
+        axis.text.x = element_text(angle=90),panel.grid.minor = element_blank())+
+  labs(title = "Area harvested & Production Over time",subtitle = paste0("From : ",mindate," till ",maxdate))
+
+
+
+
+
+###################Dumbell##############################################
+
+byareayear<-crop_organized %>%
+  filter(.,year==2000 | year==2020) %>%  
+  group_by(.,Area,year) %>% 
+  summarise(sumarea=sum(`Area_harvested(ha)`,na.rm = TRUE)) %>% 
+  pivot_wider(.,names_from = year,
+              values_from = sumarea,
+              values_fn = function(x) mean(x,na.rm = TRUE),
+              names_prefix = "year_" ) %>% 
+  mutate(Area= fct_reorder(Area, year_2020)) %>% 
+  drop_na()
+
+
+byareayear$Area <-factor(byareayear$Area,
+                          levels= as.character(byareayear$Area))
+
+ggplot(byareayear, aes(x=year_2000, xend=year_2020, y=Area, group=Area)) + 
+  geom_dumbbell(color="#F8747C", 
+                size=1.3, 
+                color_xend="#0e668b") + 
+  scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6)) + 
+  labs(x=NULL, 
+       y=NULL, 
+       title="Area Harvested Change By Country", 
+       subtitle="2000 vs 2020") +
+  theme(plot.title = element_text(face="bold"),
+        plot.background=element_rect(fill="#f7f7f7"),
+        panel.background=element_rect(fill="#f7f7f7"),
+        panel.grid.minor=element_blank(),
+        panel.grid.major.y=element_blank(),
+        panel.grid.major.x=element_line(),
+        axis.ticks=element_blank(),
+        legend.position="top",
+        panel.border=element_blank())
+
+
+####################top countries################################
+
+####wheat
+wheat10<-crop_organized %>% 
+  filter(.,crop_organized$Item =="Wheat", crop_organized$year>2010) %>% 
+  group_by(Area) %>% 
+  drop_na() %>% 
+  summarize(sumprod=sum(`Production(tonnes)`)) %>% 
+  arrange(desc(sumprod)) %>% 
+  top_n(sumprod,n = 10)
+
+colnames(wheat10)<-c("Country","Total")
+wheat10$percent_Total<-round(100*(wheat10$Total/sum(wheat10$Total)),2)
+View(wheat10)
+
+
+wheat11 <- wheat10 %>% 
+  mutate(csum = rev(cumsum(rev(percent_Total))), 
+         pos = percent_Total/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), percent_Total/2, pos))
+
+
+
+ggplot(wheat10, aes(x = "" , y = percent_Total, fill = fct_inorder(Country))) +
+  geom_col(width = 1, color = 1) +
+  coord_polar(theta = "y",start = 7) +
+  scale_fill_brewer(palette = "Set3") +
+  geom_label_repel(data = wheat11,
+                   aes(y = pos, label = paste0(percent_Total, "%")),
+                   size = 4.5, nudge_x = 1, show.legend = FALSE) +
+  guides(fill = guide_legend(title = "Countries")) +
+  theme_void()+
+  labs(title = "Top 10 Countries By Production Of Wheat",subtitle = "From 2010 to 2020")
+
+
+
+####Maize
+
+maize10<-crop_organized %>% 
+  filter(.,crop_organized$Item =="Maize", crop_organized$year>2010) %>% 
+  group_by(Area) %>% 
+  drop_na() %>% 
+  summarize(sumprod=sum(`Production(tonnes)`)) %>% 
+  arrange(desc(sumprod)) %>% 
+  top_n(sumprod,n = 10)
+
+colnames(maize10)<-c("Country","Total")
+maize10$percent_Total<-round(100*(maize10$Total/sum(maize10$Total)),2)
+
+
+
+maize11 <- maize10 %>% 
+  mutate(csum = rev(cumsum(rev(percent_Total))), 
+         pos = percent_Total/2 + lead(csum, 1),
+         pos = if_else(is.na(pos), percent_Total/2, pos))
+
+
+
+ggplot(maize10, aes(x = "" , y = percent_Total, fill = fct_inorder(Country))) +
+  geom_col(width = 1, color = 1) +
+  coord_polar(theta = "y",start = 7) +
+  scale_fill_brewer(palette = "Set3") +
+  geom_label_repel(data = maize11,
+                   aes(y = pos, label = paste0(percent_Total, "%")),
+                   size = 4.5, nudge_x = 1, show.legend = FALSE) +
+  guides(fill = guide_legend(title = "Countries")) +
+  theme_void()+
+  labs(title = "Top 10 Countries By Production Of Maize",subtitle = "From 2010 to 2020")
+
+
+
+###############################################################################
+################ ------------ALL-----------------##############################
+
+round(max(fert_organized$fertilizer_utilization,na.rm = TRUE))
+min(fert_organized$fertilizer_utilization,na.rm = TRUE)
+round(mean(fert_organized$fertilizer_utilization,na.rm = TRUE))
+round(sd(fert_organized$fertilizer_utilization,na.rm = TRUE))
+
+max(pop_organized$Population,na.rm = TRUE)
+min(pop_organized$Population,na.rm = TRUE)
+mean(pop_organized$Population,na.rm = TRUE)
+sd(pop_organized$Population,na.rm = TRUE)
+
+
+######################BOXplot fert###############################################
+
+topprod<-crop_organized %>% 
+  filter(.,Area != "USSR") %>% 
+  group_by(.,Area) %>% 
+  summarise(.,sumprod=sum(`Production(tonnes)`,na.rm = TRUE)) %>% 
+  arrange(desc(sumprod)) %>% 
+  top_n(sumprod,n=10)
+
+fer10<- fert_organized %>% 
+  filter(.,Country.Name == topprod$Area)
+unique(fer10$Country.Name)
+
+
+ggplot(fer10, aes(Country.Name, fer10$fertilizer_utilization))+
+  geom_boxplot(varwidth=T, fill="plum") + 
+  labs(title="Distribution of fertilizers For the Top 10 Countries By Production ", 
+       subtitle="By Total Production",
+       caption="*USSR excluded",
+       x="Countries",
+       y="fertlizer utilization Kg/ha")+
+  scale_x_discrete(guide = guide_axis(n.dodge=3))
+
+
+
+########################trend#######################################
+
+trefert<-fert_organized %>% 
+  group_by(.,year) %>% 
+  summarise(., avgfert=mean(fertilizer_utilization,na.rm=TRUE))
+
+fer<-ggplot(trefert, aes(x=year)) + 
+  geom_line(aes(y=avgfert),size = 1,color= "purple") + 
+  labs(title="Trend Of Fertilizers Usage over Time", 
+       subtitle="From 1961 till 2020", 
+       y="AVG fertilizer usage Kg/ha",
+       x= "Years")
+
+###############top fert##############################################
+
+topfert<-fert_organized %>% 
+  group_by(.,Country.Name) %>% 
+  summarise(.,avgfert=mean(fertilizer_utilization,na.rm=TRUE)) %>% 
+  arrange(desc(avgfert)) %>% 
+  top_n(avgfert,n = 10) 
+
+ggplot(topfert,aes(x=reorder(Country.Name,-avgfert),y=avgfert))+
+  geom_bar(stat="identity",width=.5,fill="#F8747C")+
+  labs(title = "Top 10 Countries By Average Usage Of fertilizers",
+       subtitle = "1960 to 2020",x="Countries", y="AVG fertilizer usage Kg/ha")+
+  theme(axis.text.x = element_text(angle=65,vjust = 0.6))
+
+###### Compare avg production to top 10 countries by fert
+fertavgprod<-crop_organized %>% 
+  filter(.,Area %in% topfert$Country.Name) %>% 
+  group_by(.,Area) %>% 
+  summarise(.,avgprod=mean(`Production(tonnes)`,na.rm=TRUE))
+
+fertavgprod<- fertavgprod %>% 
+  mutate(above_avg=ifelse(avgprod>=656195.6,T,F))
+View(fertavgprod)
+
+###### Compare avg yield to top 10 countries by fert
+fertavgyield<-crop_organized %>% 
+  filter(.,Area %in% topfert$Country.Name) %>% 
+  group_by(.,Area) %>% 
+  summarise(.,avgyield=mean(`Yield(tonnes/ha)`,na.rm=TRUE))
+
+fertavgyield<- fertavgyield %>% 
+  mutate(above_avg=ifelse(avgyield>=12.11,T,F))
+View(fertavgyield)
+
+###### Compare avg yield to top 10 countries by fert
+fertavgarea<-crop_organized %>% 
+  filter(.,Area %in% topfert$Country.Name) %>% 
+  group_by(.,Area) %>% 
+  summarise(.,avgarea=mean(`Area_harvested(ha)`,na.rm=TRUE))
+
+fertavgarea<- fertavgarea %>% 
+  mutate(above_avg=ifelse(avgarea>=135912.5,T,F))
+View(fertavgarea)
+
+#####################low 10#############################
+
+lowfert<-fert_organized %>% 
+  group_by(.,Country.Name) %>% 
+  summarise(.,avgfert=mean(fertilizer_utilization,na.rm=TRUE)) %>% 
+  arrange(desc(avgfert)) %>% 
+  top_n(avgfert,n = -10) 
+
+ggplot(lowfert,aes(x=reorder(Country.Name,avgfert),y=avgfert))+
+  geom_bar(stat="identity",width=.5,fill="#F8747C")+
+  labs(title = "Top 10 Lowest Countries By Average Usage Of fertilizers",
+       subtitle = "1960 to 2020",x="Countries", y="AVG fertilizer usage Kg/ha")+
+  theme(axis.text.x = element_text(angle=65,vjust = 0.6,hjust = 0.6))
+
+
+###### Compare avg production to top 10 LOWEST countries by fert
+fertavgprod<-crop_organized %>% 
+  filter(.,Area %in% lowfert$Country.Name) %>% 
+  group_by(.,Area) %>% 
+  summarise(.,avgprod=mean(`Production(tonnes)`,na.rm=TRUE))
+
+fertavgprod<- fertavgprod %>% 
+  mutate(above_avg=ifelse(avgprod>=656195.6,T,F))
+View(fertavgprod)
+
+###### Compare avg yield to top 10 LOWEST countries by fert
+fertavgyield<-crop_organized %>% 
+  filter(.,Area %in% lowfert$Country.Name) %>% 
+  group_by(.,Area) %>% 
+  summarise(.,avgyield=mean(`Yield(tonnes/ha)`,na.rm=TRUE))
+
+fertavgyield<- fertavgyield %>% 
+  mutate(above_avg=ifelse(avgyield>=12.11,T,F))
+View(fertavgyield)
+
+###### Compare avg yield to top 10 LOWEST countries by fert
+fertavgarea<-crop_organized %>% 
+  filter(.,Area %in% lowfert$Country.Name) %>% 
+  group_by(.,Area) %>% 
+  summarise(.,avgarea=mean(`Area_harvested(ha)`,na.rm=TRUE))
+
+fertavgarea<- fertavgarea %>% 
+  mutate(above_avg=ifelse(avgarea>=135912.5,T,F))
+View(fertavgarea)
+
+
+######################Merge#################################
+popsum<-pop_organized %>% 
+  group_by(.,year) %>%
+  summarise(.,sumpop=sum(Population,na.rm = TRUE))
+
+po<-ggplot(popsum,aes(x=year))+
+  geom_line(aes(y=sumpop),size= 1,color= "red")+
+  scale_y_continuous(labels = unit_format(unit = "B", scale = 1e-9))+
+  labs(title = "Population over time",subtitle = "From 1961 till 2020",x="YEARS",y="Total Population")
+
+grid.arrange(arrangeGrob(po,fer, ncol=2, nrow=1),
+             arrangeGrob(cr, ncol=1, nrow=1), heights=c(4,4))
+
+
+###################EXPORT###################
+
+write_xlsx(crop_organized,"C://Users//Wadie//Desktop//cleaned_r//crops_r.xlsx")
+write_xlsx(fert_organized,"C://Users//Wadie//Desktop//cleaned_r//ferts_r.xlsx")
+write_xlsx(pop_organized,"C://Users//Wadie//Desktop//cleaned_r//pops_r.xlsx")
