@@ -1,2 +1,2 @@
-# data_analyst_projects
-Here you can find readings and code about different analysis I did !
+# R_EDA_PROJECT
+Here you can find reading and code about an EDA about crops, fertilizers, and population using R 
