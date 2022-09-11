@@ -15,7 +15,7 @@ library(writexl)
 ##########################FULL_CROP_EDITED_DATA CLEANING #######################
 
 ## uploading and understanding the data
-df<-read.csv(file = 'C:/Users/Wadie/Desktop/agriEDA/FULL_CROP_EDITED_DATA.csv')
+df<-read.csv(file = 'C:/file_path') #change path to where the dataset is located
 
 ##Understanding the data 
 str(df)
@@ -99,7 +99,7 @@ sum(duplicated(crop_organized,fromLast = TRUE))
 #################### FERTILIZERS CLEANING ######################################
 
 ##### Uploading DATA 
-fert<- read.csv('C:/Users/Wadie/Desktop/agriEDA/Fertilizer_consumption/fertilizer_consumption_edited.csv')
+fert<- read.csv('C:/file_path')#change path to where the dataset is located
 fert<-arrange(fert,Country.Name)
 str(fert)
 skim_without_charts(fert)
@@ -194,7 +194,7 @@ fert_organized<-subset(fert_organized,fert_organized$year!=2021)
 #################### POPULATION CLEANING (like just values and things not ppl)######################################
 
 #Uploading the data
-pop <- read.csv(file = 'C:/Users/Wadie/Desktop/agriEDA/population/population_edited.csv')
+pop <- read.csv(file = 'C:/file_path')#change path to where the dataset is located
 str(pop) 
 
 ##### Creating new data frame based on `pop`
